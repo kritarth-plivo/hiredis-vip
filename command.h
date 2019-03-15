@@ -16,7 +16,7 @@ typedef enum cmd_parse_result {
 
 #define CMD_TYPE_CODEC(ACTION)                                                                      \
     ACTION( UNKNOWN )                                                                               \
-    ACTION( REQ_REDIS_DEL )                    /* redis commands - keys */                            \
+    ACTION( REQ_REDIS_DEL )                    /* redis commands - keys */                          \
     ACTION( REQ_REDIS_EXISTS )                                                                      \
     ACTION( REQ_REDIS_EXPIRE )                                                                      \
     ACTION( REQ_REDIS_EXPIREAT )                                                                    \
@@ -24,10 +24,11 @@ typedef enum cmd_parse_result {
     ACTION( REQ_REDIS_PEXPIREAT )                                                                   \
     ACTION( REQ_REDIS_PERSIST )                                                                     \
     ACTION( REQ_REDIS_PTTL )                                                                        \
+    ACTION( REQ_REDIS_SCAN )                                                                        \
     ACTION( REQ_REDIS_SORT )                                                                        \
     ACTION( REQ_REDIS_TTL )                                                                         \
     ACTION( REQ_REDIS_TYPE )                                                                        \
-    ACTION( REQ_REDIS_APPEND )                 /* redis requests - string */                             \
+    ACTION( REQ_REDIS_APPEND )                 /* redis requests - string */                        \
     ACTION( REQ_REDIS_BITCOUNT )                                                                    \
     ACTION( REQ_REDIS_DECR )                                                                        \
     ACTION( REQ_REDIS_DECRBY )                                                                      \
@@ -49,7 +50,7 @@ typedef enum cmd_parse_result {
     ACTION( REQ_REDIS_SETNX )                                                                       \
     ACTION( REQ_REDIS_SETRANGE )                                                                    \
     ACTION( REQ_REDIS_STRLEN )                                                                      \
-    ACTION( REQ_REDIS_HDEL )                   /* redis requests - hashes */                            \
+    ACTION( REQ_REDIS_HDEL )                   /* redis requests - hashes */                        \
     ACTION( REQ_REDIS_HEXISTS )                                                                     \
     ACTION( REQ_REDIS_HGET )                                                                        \
     ACTION( REQ_REDIS_HGETALL )                                                                     \
@@ -63,7 +64,7 @@ typedef enum cmd_parse_result {
     ACTION( REQ_REDIS_HSETNX )                                                                      \
     ACTION( REQ_REDIS_HSCAN)                                                                        \
     ACTION( REQ_REDIS_HVALS )                                                                       \
-    ACTION( REQ_REDIS_LINDEX )                 /* redis requests - lists */                              \
+    ACTION( REQ_REDIS_LINDEX )                 /* redis requests - lists */                         \
     ACTION( REQ_REDIS_LINSERT )                                                                     \
     ACTION( REQ_REDIS_LLEN )                                                                        \
     ACTION( REQ_REDIS_LPOP )                                                                        \
@@ -73,14 +74,14 @@ typedef enum cmd_parse_result {
     ACTION( REQ_REDIS_LREM )                                                                        \
     ACTION( REQ_REDIS_LSET )                                                                        \
     ACTION( REQ_REDIS_LTRIM )                                                                       \
-    ACTION( REQ_REDIS_PFADD )                  /* redis requests - hyperloglog */                        \
+    ACTION( REQ_REDIS_PFADD )                  /* redis requests - hyperloglog */                   \
     ACTION( REQ_REDIS_PFCOUNT )                                                                     \
     ACTION( REQ_REDIS_PFMERGE )                                                                     \
     ACTION( REQ_REDIS_RPOP )                                                                        \
     ACTION( REQ_REDIS_RPOPLPUSH )                                                                   \
     ACTION( REQ_REDIS_RPUSH )                                                                       \
     ACTION( REQ_REDIS_RPUSHX )                                                                      \
-    ACTION( REQ_REDIS_SADD )                   /* redis requests - sets */                              \
+    ACTION( REQ_REDIS_SADD )                   /* redis requests - sets */                          \
     ACTION( REQ_REDIS_SCARD )                                                                       \
     ACTION( REQ_REDIS_SDIFF )                                                                       \
     ACTION( REQ_REDIS_SDIFFSTORE )                                                                  \
@@ -95,7 +96,7 @@ typedef enum cmd_parse_result {
     ACTION( REQ_REDIS_SUNION )                                                                      \
     ACTION( REQ_REDIS_SUNIONSTORE )                                                                 \
     ACTION( REQ_REDIS_SSCAN)                                                                        \
-    ACTION( REQ_REDIS_ZADD )                   /* redis requests - sorted sets */                        \
+    ACTION( REQ_REDIS_ZADD )                   /* redis requests - sorted sets */                   \
     ACTION( REQ_REDIS_ZCARD )                                                                       \
     ACTION( REQ_REDIS_ZCOUNT )                                                                      \
     ACTION( REQ_REDIS_ZINCRBY )                                                                     \
@@ -115,12 +116,12 @@ typedef enum cmd_parse_result {
     ACTION( REQ_REDIS_ZSCORE )                                                                      \
     ACTION( REQ_REDIS_ZUNIONSTORE )                                                                 \
     ACTION( REQ_REDIS_ZSCAN)                                                                        \
-    ACTION( REQ_REDIS_EVAL )                   /* redis requests - eval */                              \
+    ACTION( REQ_REDIS_EVAL )                   /* redis requests - eval */                          \
     ACTION( REQ_REDIS_EVALSHA )                                                                     \
-    ACTION( REQ_REDIS_PING )                   /* redis requests - ping/quit */                         \
+    ACTION( REQ_REDIS_PING )                   /* redis requests - ping/quit */                     \
     ACTION( REQ_REDIS_QUIT)                                                                         \
     ACTION( REQ_REDIS_AUTH)                                                                         \
-    ACTION( RSP_REDIS_STATUS )                 /* redis response */                                   \
+    ACTION( RSP_REDIS_STATUS )                 /* redis response */                                 \
     ACTION( RSP_REDIS_ERROR )                                                                       \
     ACTION( RSP_REDIS_INTEGER )                                                                     \
     ACTION( RSP_REDIS_BULK )                                                                        \
@@ -144,7 +145,7 @@ struct keypos {
 struct cmd {
 
     uint64_t             id;              /* command id */
-    
+
     cmd_parse_result_t   result;          /* command parsing result */
     char                 *errstr;         /* error info when the command parse failed */
 
@@ -152,7 +153,7 @@ struct cmd {
 
     char                 *cmd;
     uint32_t             clen;            /* command length */
-    
+
     struct hiarray       *keys;           /* array of keypos, for req */
 
     char                 *narg_start;     /* narg start (redis) */
@@ -162,8 +163,9 @@ struct cmd {
     unsigned             quit:1;          /* quit request? */
     unsigned             noforward:1;     /* not need forward (example: ping) */
 
-    int                  slot_num;        /* this command should send to witch slot? 
+    int                  slot_num;        /* this command should send to witch slot?
                                                                           * -1:the keys in this command cross different slots*/
+    unsigned             all_nodes:1;     /* should the command be run on all the nodes in the cluster? */
     struct cmd           **frag_seq;      /* sequence of fragment command, map from keys to fragments*/
 
     redisReply           *reply;

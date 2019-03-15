@@ -1,4 +1,3 @@
-
 #ifndef __HIRCLUSTER_H
 #define __HIRCLUSTER_H
 
@@ -17,16 +16,16 @@
 
 
 #define HIRCLUSTER_FLAG_NULL                0x0
-/* The flag to decide whether add slave node in 
+/* The flag to decide whether add slave node in
   * redisClusterContext->nodes. This is set in the
-  * least significant bit of the flags field in 
+  * least significant bit of the flags field in
   * redisClusterContext. (1000000000000) */
 #define HIRCLUSTER_FLAG_ADD_SLAVE           0x1000
-/* The flag to decide whether add open slot  
+/* The flag to decide whether add open slot
   * for master node. (10000000000000) */
 #define HIRCLUSTER_FLAG_ADD_OPENSLOT        0x2000
-/* The flag to decide whether get the route 
-  * table by 'cluster slots' command. Default   
+/* The flag to decide whether get the route
+  * table by 'cluster slots' command. Default
   * is 'cluster nodes' command.*/
 #define HIRCLUSTER_FLAG_ROUTE_USE_SLOTS     0x4000
 
@@ -83,7 +82,7 @@ typedef struct redisClusterContext {
     struct timeval *connect_timeout;
 
     struct timeval *timeout;    /* receive and send timeout. */
-    
+
     struct hiarray *slots;
 
     struct dict *nodes;
@@ -101,7 +100,7 @@ typedef struct redisClusterContext {
 } redisClusterContext;
 
 redisClusterContext *redisClusterConnect(const char *addrs, int flags);
-redisClusterContext *redisClusterConnectWithTimeout(const char *addrs, 
+redisClusterContext *redisClusterConnectWithTimeout(const char *addrs,
     const struct timeval tv, int flags);
 redisClusterContext *redisClusterConnectNonBlock(const char *addrs, int flags);
 
@@ -137,6 +136,8 @@ int redisClusterAppendCommandArgv(redisClusterContext *cc, int argc, const char 
 int redisClusterGetReply(redisClusterContext *cc, void **reply);
 void redisClusterReset(redisClusterContext *cc);
 
+void print_cluster_node_list(redisClusterContext *cc);
+
 int cluster_update_route(redisClusterContext *cc);
 int test_cluster_update_route(redisClusterContext *cc);
 struct dict *parse_cluster_nodes(redisClusterContext *cc, char *str, int str_len, int flags);
@@ -153,7 +154,7 @@ typedef void (redisClusterCallbackFn)(struct redisClusterAsyncContext*, void*, v
 
 /* Context for an async connection to Redis */
 typedef struct redisClusterAsyncContext {
-    
+
     redisClusterContext *cc;
 
     /* Setup error flags so they can be used directly. */

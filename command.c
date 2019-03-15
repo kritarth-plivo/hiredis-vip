@@ -188,6 +188,8 @@ redis_argn(struct cmd *r)
     switch (r->type) {
     case CMD_REQ_REDIS_BITCOUNT:
 
+    case CMD_REQ_REDIS_SCAN:
+
     case CMD_REQ_REDIS_SET:
     case CMD_REQ_REDIS_HDEL:
     case CMD_REQ_REDIS_HMGET:
@@ -594,6 +596,12 @@ redis_parse_cmd(struct cmd *r)
                     break;
                 }
 
+                if (str4icmp(m, 's', 'c', 'a', 'n')) {
+                    r->type = CMD_REQ_REDIS_SCAN;
+                    r->all_nodes = 1;
+                    break;
+                }
+
                 if (str4icmp(m, 's', 'o', 'r', 't')) {
                     r->type = CMD_REQ_REDIS_SORT;
                     break;
@@ -601,7 +609,7 @@ redis_parse_cmd(struct cmd *r)
 
                 if (str4icmp(m, 'p', 'i', 'n', 'g')) {
                     r->type = CMD_REQ_REDIS_PING;
-                    r->noforward = 1;
+                    r->all_nodes = 1;
                     break;
                 }
 
@@ -1063,7 +1071,7 @@ redis_parse_cmd(struct cmd *r)
             } else if (isdigit(ch)) {
                 rlen = rlen * 10 + (uint32_t)(ch - '0');
             } else if (ch == CR) {
-                
+
                 if (rnarg == 0) {
                     goto error;
                 }
@@ -1208,7 +1216,7 @@ redis_parse_cmd(struct cmd *r)
                     {
                         goto error;
                     }
-                    
+
                     kpos = array_n(r->keys, array_len-1);
                     if (kpos == NULL || kpos->v_len != 0) {
                         goto error;
@@ -1596,26 +1604,26 @@ redis_parse_cmd(struct cmd *r)
 done:
 
     ASSERT(r->type > CMD_UNKNOWN && r->type < CMD_SENTINEL);
-    
+
     r->result = CMD_PARSE_OK;
 
     return;
 
 enomem:
-    
+
     r->result = CMD_PARSE_ENOMEM;
 
     return;
 
 error:
-    
+
     r->result = CMD_PARSE_ERROR;
     errno = EINVAL;
     if(r->errstr == NULL){
         r->errstr = hi_alloc(100*sizeof(*r->errstr));
     }
 
-    len = _scnprintf(r->errstr, 100, "Parse command error. Cmd type: %d, state: %d, break position: %d.", 
+    len = _scnprintf(r->errstr, 100, "Parse command error. Cmd type: %d, state: %d, break position: %d.",
         r->type, state, (int)(p - r->cmd));
     r->errstr[len] = '\0';
 }
@@ -1628,7 +1636,7 @@ struct cmd *command_get()
     {
         return NULL;
     }
-        
+
     command->id = ++cmd_id;
     command->result = CMD_PARSE_OK;
     command->errstr = NULL;
@@ -1642,12 +1650,13 @@ struct cmd *command_get()
     command->quit = 0;
     command->noforward = 0;
     command->slot_num = -1;
+    command->all_nodes = 0;
     command->frag_seq = NULL;
     command->reply = NULL;
     command->sub_commands = NULL;
 
     command->keys = hiarray_create(1, sizeof(struct keypos));
-    if (command->keys == NULL) 
+    if (command->keys == NULL)
     {
         hi_free(command);
         return NULL;
@@ -1693,8 +1702,6 @@ void command_destroy(struct cmd *command)
     {
         listRelease(command->sub_commands);
     }
-    
+
     hi_free(command);
 }
-
-
