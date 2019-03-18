@@ -2091,6 +2091,11 @@ static int _redisClusterConnect2(redisClusterContext *cc)
         return REDIS_ERR;
     }
 
+    if(cc->cursor_info == NULL)
+    {
+        cc->cursor_info = dictCreate(&clusterNodesDictType, NULL);
+    }
+
     return cluster_update_route(cc);
 }
 
@@ -2105,6 +2110,11 @@ static redisClusterContext *_redisClusterConnect(redisClusterContext *cc, const 
     if (ret != REDIS_OK)
     {
         return cc;
+    }
+
+    if(cc->cursor_info == NULL)
+    {
+        cc->cursor_info = dictCreate(&clusterNodesDictType, NULL);
     }
 
     cluster_update_route(cc);
@@ -3007,6 +3017,54 @@ void concat_redis_reply(redisReply *reply_aggr, redisReply *reply) {
     }
 }
 
+char** str_split(char* a_str, const char a_delim)
+{
+    char** result    = 0;
+    size_t count     = 0;
+    char* tmp        = a_str;
+    char* last_comma = 0;
+    char delim[2];
+    delim[0] = a_delim;
+    delim[1] = 0;
+
+    /* Count how many elements will be extracted. */
+    while (*tmp)
+    {
+        if (a_delim == *tmp)
+        {
+            count++;
+            last_comma = tmp;
+        }
+        tmp++;
+    }
+
+    /* Add space for trailing token. */
+    count += last_comma < (a_str + strlen(a_str) - 1);
+
+    /* Add space for terminating null string so caller
+       knows where the list of returned strings ends. */
+    count++;
+
+    result = malloc(sizeof(char*) * count);
+
+    if (result)
+    {
+        size_t idx  = 0;
+        char* token = strtok(a_str, delim);
+
+        while (token)
+        {
+            assert(idx < count);
+            *(result + idx++) = strdup(token);
+            token = strtok(0, delim);
+        }
+        assert(idx == count - 1);
+        *(result + idx) = 0;
+    }
+
+    return result;
+}
+
 static void *redis_cluster_command_execute(redisClusterContext *cc,
     struct cmd *command)
 {
@@ -3034,10 +3092,31 @@ retry:
             return NULL;
         }
 
+        // get the cursor if any
+        // find the node from cursor to scan
+        printf("%d\n", command->narg);
+        printf("start: %s\n", command->narg_start);
+        printf("end: %d\n", command->keys->nelem);
+
+        char **tokens;
+
+        tokens = str_split(command->narg_start, '\n');
+
+        char *cursor = *(tokens + 4);
+
         di = dictGetIterator(cc->nodes);
-        while((de = dictNext(di)) != NULL)
+        do
         {
+            if (cursor[0] == '0') {
+                // new scan iteration
+                de = dictNext(di);
+            } else {
+                // find the cursor to get node to scan
+                de = dictFind(cc->nodes, cursor);
+            }
+
             node = dictGetEntryVal(de);
+            dictDelete(cc->nodes, cursor);
             if(node == NULL)
             {
                 continue;
@@ -3053,15 +3132,31 @@ retry:
             {
                 __redisClusterSetError(cc, c->err, c->errstr);
                 free(replies);
+                for (int i = 0; *(tokens + i); i++)
+                {
+                    free(*(tokens + i));
+                }
+                free(tokens);
                 return NULL;
             }
 
             replies[reply_idx] = __redisBlockForReply(c);
+            // redo with the cursor returned if not 0
             if(replies[reply_idx] != NULL)
             {
-                aggr_cnt += replies[reply_idx++]->element[1]->elements;
+                aggr_cnt += replies[reply_idx]->element[1]->elements;
+                cursor = replies[reply_idx]->element[0]->str;
+                if (cursor[0] == '0') {
+                    // new scan iteration
+                    de = dictNext(di);
+                } else {
+                    if (dictAdd(cc->cursor_info, cursor, node) != DICT_OK) {
+                        printf("Unable to add cursor to dictionary\n");
+                    }
+                }
+                reply_idx++;
             }
-        }
+        } while(cursor[0] == '0' && de != NULL);
 
         dictReleaseIterator(di);
 
@@ -3072,19 +3167,22 @@ retry:
         reply_aggr->element[0] = malloc(sizeof(redisReply));
         reply_aggr->element[1] = malloc(sizeof(redisReply));
 
-        reply_aggr->element[0]->type = REDIS_REPLY_STRING;
-        reply_aggr->element[0]->len = 1;
-        reply_aggr->element[0]->str = malloc(1 * sizeof(char));
-        reply_aggr->element[0]->str[0] = '0';
+        reply_aggr->element[0]->type = REDIS_REPLY_INTEGER;
 
         reply_aggr->element[1]->type = REDIS_REPLY_ARRAY;
         reply_aggr->element[1]->elements = 0;
         reply_aggr->element[1]->element = malloc(aggr_cnt * sizeof(redisReply *));
 
+        reply_aggr->element[0]->integer = strtol(cursor, (char **)NULL, 10);
         for (size_t i=0; i<reply_idx; ++i) {
             concat_redis_reply(reply_aggr, replies[i]);
         }
 
+        for (int i = 0; *(tokens + i); i++)
+        {
+            free(*(tokens + i));
+        }
+        free(tokens);
         free(replies);
         return reply_aggr;
     }

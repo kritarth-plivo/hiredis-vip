@@ -86,6 +86,7 @@ typedef struct redisClusterContext {
     struct hiarray *slots;
 
     struct dict *nodes;
+    struct dict *cursor_info;    /* store (cursor, next host to query) pair */
     cluster_node *table[REDIS_CLUSTER_SLOTS];
 
     uint64_t route_version;
