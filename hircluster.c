@@ -2999,7 +2999,8 @@ void concat_redis_reply(redisReply *reply_aggr, redisReply *reply) {
     for (size_t i=0; i<reply->elements; ++i) {
         if (reply->element[i]->elements > 0) {
             for (size_t j=0; j<reply->element[i]->elements; ++j) {
-                reply_aggr->element[1]->element[reply_aggr->element[1]->elements] = reply->element[i]->element[j];
+                reply_aggr->element[1]->element[reply_aggr->element[1]->elements] =
+                    reply->element[i]->element[j];
                 reply_aggr->element[1]->elements ++;
             }
         }
@@ -3020,29 +3021,16 @@ retry:
         dictIterator *di;
         dictEntry *de;
         struct cluster_node *node;
-        redisReply *reply = NULL;
+        redisReply **replies = (redisReply**)malloc(cc->nodes->size * sizeof(redisReply *));
+        uint reply_idx = 0;
         redisReply *reply_aggr = (redisReply*)malloc(sizeof(redisReply));
+        uint aggr_cnt = 0;
         redisContext *c = NULL;
-
-        reply_aggr->type = REDIS_REPLY_ARRAY;
-        reply_aggr->elements = 2;
-        reply_aggr->element = (redisReply**)malloc(2 * sizeof(redisReply *));
-
-        reply_aggr->element[0] = malloc(sizeof(redisReply));
-        reply_aggr->element[1] = malloc(sizeof(redisReply));
-
-        reply_aggr->element[0]->type = REDIS_REPLY_STRING;
-        reply_aggr->element[0]->len = 1;
-        reply_aggr->element[0]->str = malloc(1 * sizeof(char));
-        reply_aggr->element[0]->str[0] = '0';
-
-        reply_aggr->element[1]->type = REDIS_REPLY_ARRAY;
-        reply_aggr->element[1]->elements = 0;
-        reply_aggr->element[1]->element = malloc(10000 * sizeof(redisReply *));
 
         if(cc == NULL || cc->nodes == NULL)
         {
             freeReplyObject(reply_aggr);
+            free(replies);
             return NULL;
         }
 
@@ -3064,22 +3052,40 @@ retry:
             if (__redisAppendCommand(c,command->cmd, command->clen) != REDIS_OK)
             {
                 __redisClusterSetError(cc, c->err, c->errstr);
+                free(replies);
                 return NULL;
             }
 
-            reply = __redisBlockForReply(c);
-            if(reply != NULL)
+            replies[reply_idx] = __redisBlockForReply(c);
+            if(replies[reply_idx] != NULL)
             {
-                concat_redis_reply(reply_aggr, reply);
+                aggr_cnt += replies[reply_idx++]->element[1]->elements;
             }
         }
 
-        // print the entire reply
-        for (size_t i=0; i<reply_aggr->element[1]->elements; ++i) {
-            printf("%d) %s\n", (int)i, reply_aggr->element[1]->element[i]->str);
+        dictReleaseIterator(di);
+
+        reply_aggr->type = REDIS_REPLY_ARRAY;
+        reply_aggr->elements = 2;
+        reply_aggr->element = (redisReply**)malloc(2 * sizeof(redisReply *));
+
+        reply_aggr->element[0] = malloc(sizeof(redisReply));
+        reply_aggr->element[1] = malloc(sizeof(redisReply));
+
+        reply_aggr->element[0]->type = REDIS_REPLY_STRING;
+        reply_aggr->element[0]->len = 1;
+        reply_aggr->element[0]->str = malloc(1 * sizeof(char));
+        reply_aggr->element[0]->str[0] = '0';
+
+        reply_aggr->element[1]->type = REDIS_REPLY_ARRAY;
+        reply_aggr->element[1]->elements = 0;
+        reply_aggr->element[1]->element = malloc(aggr_cnt * sizeof(redisReply *));
+
+        for (size_t i=0; i<reply_idx; ++i) {
+            concat_redis_reply(reply_aggr, replies[i]);
         }
 
-        dictReleaseIterator(di);
+        free(replies);
         return reply_aggr;
     }
 
