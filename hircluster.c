@@ -3092,18 +3092,11 @@ retry:
             return NULL;
         }
 
-        // get the cursor if any
-        // find the node from cursor to scan
-        printf("%d\n", command->narg);
-        printf("start: %s\n", command->narg_start);
-        printf("end: %d\n", command->keys->nelem);
-
         char **tokens;
+        tokens = str_split(command->cmd, '\n');
 
-        tokens = str_split(command->narg_start, '\n');
-
-        char *cursor = *(tokens + 4);
-
+        sds cursor = sdsnew(*(tokens + 4));
+        sdstrim(cursor,"\r");
         di = dictGetIterator(cc->nodes);
         do
         {
@@ -3112,11 +3105,19 @@ retry:
                 de = dictNext(di);
             } else {
                 // find the cursor to get node to scan
-                de = dictFind(cc->nodes, cursor);
+                de = dictFind(cc->cursor_info, cursor);
             }
-
+            if(de == NULL) {
+                de = dictNext(di);
+                continue;
+            }
+            // TODO: FIXME: delete the cursor info once used
+            // this does not work now because it tries to delete the entire node
+            // object(the value of the key) which we do not want. As a possible
+            // fix, you can assign a different node object instead of the actual
+            // one (maybe a copy).
+            //dictDelete(cc->cursor_info, cursor);
             node = dictGetEntryVal(de);
-            dictDelete(cc->nodes, cursor);
             if(node == NULL)
             {
                 continue;
@@ -3145,13 +3146,13 @@ retry:
             if(replies[reply_idx] != NULL)
             {
                 aggr_cnt += replies[reply_idx]->element[1]->elements;
-                cursor = replies[reply_idx]->element[0]->str;
+                cursor = sdsnew(replies[reply_idx]->element[0]->str);
                 if (cursor[0] == '0') {
                     // new scan iteration
                     de = dictNext(di);
                 } else {
                     if (dictAdd(cc->cursor_info, cursor, node) != DICT_OK) {
-                        printf("Unable to add cursor to dictionary\n");
+                        printf("ERROR: Unable to add cursor to dictionary\n");
                     }
                 }
                 reply_idx++;
