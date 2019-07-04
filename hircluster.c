@@ -121,6 +121,18 @@ dictType clusterNodesRefDictType = {
     NULL                        /* val destructor */
 };
 
+/* Cursor nodes hash table, mapping cursor to clusterNode structures.
+ * Those nodes need destroy.
+ */
+dictType cursorNodesRefDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    NULL                        /* val destructor */
+};
+
 
 void listCommandFree(void *command)
 {
@@ -2093,7 +2105,7 @@ static int _redisClusterConnect2(redisClusterContext *cc)
 
     if(cc->cursor_info == NULL)
     {
-        cc->cursor_info = dictCreate(&clusterNodesDictType, NULL);
+        cc->cursor_info = dictCreate(&cursorNodesRefDictType, NULL);
     }
 
     return cluster_update_route(cc);
@@ -2114,7 +2126,7 @@ static redisClusterContext *_redisClusterConnect(redisClusterContext *cc, const 
 
     if(cc->cursor_info == NULL)
     {
-        cc->cursor_info = dictCreate(&clusterNodesDictType, NULL);
+        cc->cursor_info = dictCreate(&cursorNodesRefDictType, NULL);
     }
 
     cluster_update_route(cc);
@@ -3111,12 +3123,7 @@ retry:
                 de = dictNext(di);
                 continue;
             }
-            // TODO: FIXME: delete the cursor info once used
-            // this does not work now because it tries to delete the entire node
-            // object(the value of the key) which we do not want. As a possible
-            // fix, you can assign a different node object instead of the actual
-            // one (maybe a copy).
-            //dictDelete(cc->cursor_info, cursor);
+            dictDelete(cc->cursor_info, cursor);
             node = dictGetEntryVal(de);
             if(node == NULL)
             {
