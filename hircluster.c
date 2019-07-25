@@ -3049,6 +3049,7 @@ char** str_split(char* a_str, const char a_delim)
         }
         tmp++;
     }
+    printf("count:::: %d\n", count);
 
     /* Add space for trailing token. */
     count += last_comma < (a_str + strlen(a_str) - 1);
@@ -3094,30 +3095,43 @@ retry:
         redisReply **replies = (redisReply**)malloc(cc->nodes->size * sizeof(redisReply *));
         uint reply_idx = 0;
         redisReply *reply_aggr = (redisReply*)malloc(sizeof(redisReply));
-        uint aggr_cnt = 0;
+        uint aggr_cnt = 0, count = 0;
         redisContext *c = NULL;
-
-        if(cc == NULL || cc->nodes == NULL)
-        {
-            freeReplyObject(reply_aggr);
-            free(replies);
-            return NULL;
+        sds cursor, count_str;
+        char *cmd = calloc(strlen(command->cmd)+1, sizeof(char)), *cmd_cursor = command->cmd;
+        strcpy(cmd, command->cmd);
+        size_t idx  = 0;
+        char* token = strtok(cmd, "\n");
+        if(cc == NULL || cc->nodes == NULL) {
+          goto error;
         }
-
-        char **tokens;
-        tokens = str_split(command->cmd, '\n');
-
-        sds cursor = sdsnew(*(tokens + 4));
-        sdstrim(cursor,"\r");
+        while (token) {
+            if (idx < 5) cmd_cursor += strlen(token);
+            switch (idx++) {
+            case 4:
+                // cursor
+                cursor = sdsnew(strdup(token));
+                break;
+            case 12:
+                // count
+                count_str = sdsnew(strdup(token));
+                break;
+            }
+            token = strtok(NULL, "\n");
+        }
+        sdstrim(cursor,"\r"); sdstrim(count_str,"\r");
+        count = hi_atoi(count_str, sdslen(count_str));
         di = dictGetIterator(cc->nodes);
-        do
-        {
+        do {
             if (cursor[0] == '0') {
-                // new scan iteration
                 de = dictNext(di);
             } else {
                 // find the cursor to get node to scan
                 de = dictFind(cc->cursor_info, cursor);
+                if (de == NULL) {
+                  printf("ERROR: this should never happen\n");
+                }
+                while (dictGetEntryVal(de) != dictGetEntryVal(dictNext(di)) && di->entry != NULL) {}
             }
             if(de == NULL) {
                 de = dictNext(di);
@@ -3125,49 +3139,46 @@ retry:
             }
             dictDelete(cc->cursor_info, cursor);
             node = dictGetEntryVal(de);
-            if(node == NULL)
-            {
-                continue;
-            }
+            if(node == NULL) continue;
 
             c = ctx_get_by_node(cc, node);
-            if(c == NULL || c->err)
-            {
-                continue;
-            }
+            if(c == NULL || c->err) continue;
 
-            if (__redisAppendCommand(c,command->cmd, command->clen) != REDIS_OK)
-            {
+            if (__redisAppendCommand(c,command->cmd, command->clen) != REDIS_OK) {
                 __redisClusterSetError(cc, c->err, c->errstr);
-                free(replies);
-                for (int i = 0; *(tokens + i); i++)
-                {
-                    free(*(tokens + i));
-                }
-                free(tokens);
-                return NULL;
+                goto error;
             }
 
             replies[reply_idx] = __redisBlockForReply(c);
             // redo with the cursor returned if not 0
-            if(replies[reply_idx] != NULL)
-            {
+            if(replies[reply_idx] != NULL) {
                 aggr_cnt += replies[reply_idx]->element[1]->elements;
                 cursor = sdsnew(replies[reply_idx]->element[0]->str);
+
+                //printf("%c", *(cursor + 0)); printf("%c", *(cursor + 1)); printf("%c", *(cursor + 2)); printf("%c", *(cursor + 3)); printf("%d\n", *(cursor + 4));
+                reply_idx++;
                 if (cursor[0] == '0') {
-                    // new scan iteration
-                    de = dictNext(di);
+                    // this node has no more data to offer
+                    // continue to next node if count not met
+                    // else return
+                    if (aggr_cnt > count) {
+                        goto done;
+                    }
+                    // change the cursor in the command to 0
+                    char *tmp = cmd_cursor;
+                    while (*tmp && '\r' != *tmp) {
+                      *tmp++ = '0';
+                    }
                 } else {
                     if (dictAdd(cc->cursor_info, cursor, node) != DICT_OK) {
                         printf("ERROR: Unable to add cursor to dictionary\n");
+                        goto error;
                     }
+                    goto done;
                 }
-                reply_idx++;
             }
-        } while(cursor[0] == '0' && de != NULL);
-
-        dictReleaseIterator(di);
-
+        } while (de != NULL);
+    done:
         reply_aggr->type = REDIS_REPLY_ARRAY;
         reply_aggr->elements = 2;
         reply_aggr->element = (redisReply**)malloc(2 * sizeof(redisReply *));
@@ -3186,12 +3197,15 @@ retry:
             concat_redis_reply(reply_aggr, replies[i]);
         }
 
-        for (int i = 0; *(tokens + i); i++)
-        {
-            free(*(tokens + i));
+    error:
+        dictReleaseIterator(di);
+        if (reply_aggr->elements != 2) {
+            freeReplyObject(reply_aggr);
+            reply_aggr = NULL;
         }
-        free(tokens);
         free(replies);
+        free(cmd);
+        sdsfree(count_str);
         return reply_aggr;
     }
 
