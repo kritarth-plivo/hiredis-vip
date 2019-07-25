@@ -24,6 +24,7 @@ typedef enum cmd_parse_result {
     ACTION( REQ_REDIS_PEXPIREAT )                                                                   \
     ACTION( REQ_REDIS_PERSIST )                                                                     \
     ACTION( REQ_REDIS_PTTL )                                                                        \
+    ACTION( REQ_REDIS_SCAN )                                                                        \
     ACTION( REQ_REDIS_SORT )                                                                        \
     ACTION( REQ_REDIS_TTL )                                                                         \
     ACTION( REQ_REDIS_TYPE )                                                                        \
@@ -164,6 +165,7 @@ struct cmd {
 
     int                  slot_num;        /* this command should send to witch slot? 
                                                                           * -1:the keys in this command cross different slots*/
+    unsigned             all_nodes:1;     /* should the command be run on all the nodes in the cluster? */
     struct cmd           **frag_seq;      /* sequence of fragment command, map from keys to fragments*/
 
     redisReply           *reply;

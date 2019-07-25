@@ -188,6 +188,8 @@ redis_argn(struct cmd *r)
     switch (r->type) {
     case CMD_REQ_REDIS_BITCOUNT:
 
+    case CMD_REQ_REDIS_SCAN:
+
     case CMD_REQ_REDIS_SET:
     case CMD_REQ_REDIS_HDEL:
     case CMD_REQ_REDIS_HMGET:
@@ -591,6 +593,12 @@ redis_parse_cmd(struct cmd *r)
 
                 if (str4icmp(m, 'e', 'v', 'a', 'l')) {
                     r->type = CMD_REQ_REDIS_EVAL;
+                    break;
+                }
+
+                if (str4icmp(m, 's', 'c', 'a', 'n')) {
+                    r->type = CMD_REQ_REDIS_SCAN;
+                    r->all_nodes = 1;
                     break;
                 }
 
@@ -1642,6 +1650,7 @@ struct cmd *command_get()
     command->quit = 0;
     command->noforward = 0;
     command->slot_num = -1;
+    command->all_nodes = 0;
     command->frag_seq = NULL;
     command->reply = NULL;
     command->sub_commands = NULL;

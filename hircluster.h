@@ -87,6 +87,7 @@ typedef struct redisClusterContext {
     struct hiarray *slots;
 
     struct dict *nodes;
+    struct dict *cursor_info;    /* store (cursor, next host to query) pair */
     cluster_node *table[REDIS_CLUSTER_SLOTS];
 
     uint64_t route_version;
@@ -136,6 +137,8 @@ int redisClusterAppendCommand(redisClusterContext *cc, const char *format, ...);
 int redisClusterAppendCommandArgv(redisClusterContext *cc, int argc, const char **argv, const size_t *argvlen);
 int redisClusterGetReply(redisClusterContext *cc, void **reply);
 void redisClusterReset(redisClusterContext *cc);
+
+void print_cluster_node_list(redisClusterContext *cc);
 
 int cluster_update_route(redisClusterContext *cc);
 int test_cluster_update_route(redisClusterContext *cc);

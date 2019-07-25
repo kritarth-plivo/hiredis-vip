@@ -122,6 +122,17 @@ dictType clusterNodesRefDictType = {
     NULL                        /* val destructor */
 };
 
+/* Cursor nodes hash table, mapping cursor to clusterNode structures.
+ * Those nodes need destroy.
+ */
+dictType cursorNodesRefDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    NULL                        /* val destructor */
+};
 
 void listCommandFree(void *command)
 {
@@ -1950,7 +1961,7 @@ cluster_update_route(redisClusterContext *cc)
     return REDIS_ERR;
 }
 
-static void print_cluster_node_list(redisClusterContext *cc)
+void print_cluster_node_list(redisClusterContext *cc)
 {
     dictIterator *di = NULL;
     dictEntry *de;
@@ -2091,7 +2102,12 @@ static int _redisClusterConnect2(redisClusterContext *cc)
         __redisClusterSetError(cc,REDIS_ERR_OTHER,"servers address does not set up");
         return REDIS_ERR;
     }
-    
+
+    if(cc->cursor_info == NULL)
+    {
+        cc->cursor_info = dictCreate(&cursorNodesRefDictType, NULL);
+    }
+
     return cluster_update_route(cc);
 }
 
@@ -2107,7 +2123,12 @@ static redisClusterContext *_redisClusterConnect(redisClusterContext *cc, const 
     {
         return cc;
     }
-    
+
+    if(cc->cursor_info == NULL)
+    {
+        cc->cursor_info = dictCreate(&cursorNodesRefDictType, NULL);
+    }
+
     cluster_update_route(cc);
 
     return cc;
@@ -2995,6 +3016,19 @@ done:
     return node;
 }
 
+void concat_redis_reply(redisReply *reply_aggr, redisReply *reply) {
+    // concat the reply into the reply_aggr
+    for (size_t i=0; i<reply->elements; ++i) {
+        if (reply->element[i]->elements > 0) {
+            for (size_t j=0; j<reply->element[i]->elements; ++j) {
+                reply_aggr->element[1]->element[reply_aggr->element[1]->elements] =
+                    reply->element[i]->element[j];
+                reply_aggr->element[1]->elements ++;
+            }
+        }
+    }
+}
+
 static void *redis_cluster_command_execute(redisClusterContext *cc, 
     struct cmd *command)
 {
@@ -3005,7 +3039,126 @@ static void *redis_cluster_command_execute(redisClusterContext *cc,
     int error_type;
 
 retry:
-    
+    if (command->all_nodes == 1) {
+        dictIterator *di;
+        dictEntry *de;
+        struct cluster_node *node;
+        redisReply **replies = (redisReply**)malloc(cc->nodes->size * sizeof(redisReply *));
+        uint reply_idx = 0;
+        redisReply *reply_aggr = (redisReply*)malloc(sizeof(redisReply));
+        uint aggr_cnt = 0, count = 0;
+        redisContext *c = NULL;
+        sds cursor, count_str;
+        char *cmd = calloc(strlen(command->cmd)+1, sizeof(char)), *cmd_cursor = command->cmd;
+        strcpy(cmd, command->cmd);
+        size_t idx  = 0;
+        char* token = strtok(cmd, "\n");
+        if(cc == NULL || cc->nodes == NULL) {
+          goto error;
+        }
+        while (token) {
+            if (idx < 5) cmd_cursor += strlen(token);
+            switch (idx++) {
+            case 4:
+                // cursor
+                cursor = sdsnew(strdup(token));
+                break;
+            case 12:
+                // count
+                count_str = sdsnew(strdup(token));
+                break;
+            }
+            token = strtok(NULL, "\n");
+        }
+        sdstrim(cursor,"\r"); sdstrim(count_str,"\r");
+        count = hi_atoi(count_str, sdslen(count_str));
+        di = dictGetIterator(cc->nodes);
+        do {
+            if (cursor[0] == '0') {
+                de = dictNext(di);
+            } else {
+                // find the cursor to get node to scan
+                de = dictFind(cc->cursor_info, cursor);
+                if (de == NULL) {
+                  printf("ERROR: this should never happen\n");
+                }
+                while (dictGetEntryVal(de) != dictGetEntryVal(dictNext(di)) && di->entry != NULL) {}
+            }
+            if(de == NULL) {
+                de = dictNext(di);
+                continue;
+            }
+            dictDelete(cc->cursor_info, cursor);
+            node = dictGetEntryVal(de);
+            if(node == NULL) continue;
+
+            c = ctx_get_by_node(cc, node);
+            if(c == NULL || c->err) continue;
+
+            if (__redisAppendCommand(c,command->cmd, command->clen) != REDIS_OK) {
+                __redisClusterSetError(cc, c->err, c->errstr);
+                goto error;
+            }
+
+            replies[reply_idx] = __redisBlockForReply(c);
+            // redo with the cursor returned if not 0
+            if(replies[reply_idx] != NULL) {
+                aggr_cnt += replies[reply_idx]->element[1]->elements;
+                cursor = sdsnew(replies[reply_idx]->element[0]->str);
+
+                reply_idx++;
+                if (cursor[0] == '0') {
+                    // this node has no more data to offer
+                    // continue to next node if count not met
+                    // else return
+                    if (aggr_cnt > count) {
+                        goto done;
+                    }
+                    // change the cursor in the command to 0
+                    char *tmp = cmd_cursor;
+                    while (*tmp && '\r' != *tmp) {
+                      *tmp++ = '0';
+                    }
+                } else {
+                    if (dictAdd(cc->cursor_info, cursor, node) != DICT_OK) {
+                        printf("ERROR: Unable to add cursor to dictionary\n");
+                        goto error;
+                    }
+                    goto done;
+                }
+            }
+        } while (de != NULL);
+    done:
+        reply_aggr->type = REDIS_REPLY_ARRAY;
+        reply_aggr->elements = 2;
+        reply_aggr->element = (redisReply**)malloc(2 * sizeof(redisReply *));
+
+        reply_aggr->element[0] = malloc(sizeof(redisReply));
+        reply_aggr->element[1] = malloc(sizeof(redisReply));
+
+        reply_aggr->element[0]->type = REDIS_REPLY_INTEGER;
+
+        reply_aggr->element[1]->type = REDIS_REPLY_ARRAY;
+        reply_aggr->element[1]->elements = 0;
+        reply_aggr->element[1]->element = malloc(aggr_cnt * sizeof(redisReply *));
+
+        reply_aggr->element[0]->integer = strtol(cursor, (char **)NULL, 10);
+        for (size_t i=0; i<reply_idx; ++i) {
+            concat_redis_reply(reply_aggr, replies[i]);
+        }
+
+    error:
+        dictReleaseIterator(di);
+        if (reply_aggr->elements != 2) {
+            freeReplyObject(reply_aggr);
+            reply_aggr = NULL;
+        }
+        free(replies);
+        free(cmd);
+        sdsfree(count_str);
+        return reply_aggr;
+    }
+
     node = node_get_by_table(cc, (uint32_t)command->slot_num);
     if(node == NULL)
     {
@@ -3576,6 +3729,10 @@ static int command_format_by_slot(redisClusterContext *cc,
         goto done;
     }
 
+    if (command->all_nodes == 1) {
+        goto done;
+    }
+
     key_count = hiarray_n(command->keys);
 
     if(key_count <= 0)
@@ -3650,7 +3807,7 @@ void *redisClusterFormattedCommand(redisClusterContext *cc, char *cmd, int len) 
 
     slot_num = command_format_by_slot(cc, command, commands);
 
-    if(slot_num < 0)
+    if(slot_num < 0 && command->all_nodes == 0)
     {
         goto error;
     }
