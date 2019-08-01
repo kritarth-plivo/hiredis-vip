@@ -3097,7 +3097,7 @@ retry:
         redisReply *reply_aggr = (redisReply*)malloc(sizeof(redisReply));
         uint aggr_cnt = 0, count = 0;
         redisContext *c = NULL;
-        sds cursor, count_str;
+        sds cursor = sdsempty(), count_str = sdsempty();
         char *cmd = calloc(strlen(command->cmd)+1, sizeof(char)), *cmd_cursor = command->cmd;
         strcpy(cmd, command->cmd);
         size_t idx  = 0;
@@ -3110,17 +3110,21 @@ retry:
             switch (idx++) {
             case 4:
                 // cursor
-                cursor = sdsnew(strdup(token));
+                cursor = sdscat(cursor, strdup(token));
+                sdstrim(cursor,"\r");
                 break;
             case 12:
                 // count
-                count_str = sdsnew(strdup(token));
+                count_str = sdscat(count_str, strdup(token));
+                sdstrim(count_str,"\r");
+                count = hi_atoi(count_str, sdslen(count_str));
                 break;
             }
             token = strtok(NULL, "\n");
         }
-        sdstrim(cursor,"\r"); sdstrim(count_str,"\r");
-        count = hi_atoi(count_str, sdslen(count_str));
+        if (sdslen(cursor) == 0 || sdslen(count_str) == 0) {
+            goto error;
+        }
         di = dictGetIterator(cc->nodes);
         do {
             if (cursor[0] == '0') {
